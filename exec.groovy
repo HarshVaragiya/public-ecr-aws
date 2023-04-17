@@ -8,7 +8,7 @@ pipeline {
         }
         stage("exec") {
             steps{
-                sh 'docker run --rm public-ecr-aws:latest ${ARG}'
+                sh 'docker run --rm public-ecr-aws:latest ${ARGS}'
             }
         }
         stage("cleanup"){
