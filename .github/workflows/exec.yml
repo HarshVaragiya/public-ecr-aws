@@ -13,5 +13,7 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag public-ecr-aws:latest
-    - run: docker run --rm public-ecr-aws:latest
-    - run: docker rmi public-ecr-aws:latest
+    - name: Execute the scan
+      run: docker run --rm public-ecr-aws:latest -max-crawl-depth 16 -threads 2000 -tag-threads 200 
+    - name: Delete the Docker image
+      run: docker rmi public-ecr-aws:latest
