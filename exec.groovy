@@ -3,12 +3,20 @@ pipeline {
     stages {
         stage("build"){
             steps {
+                // rupasa k naap p chal ja please
                 sh 'docker build -t public-ecr-aws:latest .'
             }
         }
         stage("exec") {
             steps{
-                sh 'docker run --rm public-ecr-aws:latest ${ARGS}'
+                sh 'docker run --rm -v $PWD:/pwd public-ecr-aws:latest -output /pwd/output.log ${ARGS}'
+                withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
+                    sh '''
+                        FINDINGS=$(wc -l output.log)
+                        curl "${GOTIFY_URL}" -F "title=public ecr scan finished" -F "message=total public repositories found: ${FINDINGS}" -F "priority=6"
+                    '''
+                }
+                
             }
         }
         stage("cleanup"){
