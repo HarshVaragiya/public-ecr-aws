@@ -15,6 +15,8 @@ pipeline {
         stage("cleanup"){
             steps {
                 echo 'cleaning up'
+                sh 'rm -rf * && rm -rf .*'
+                sh 'ls -alh'
             }
         }
     }
