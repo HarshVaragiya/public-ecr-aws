@@ -3,17 +3,17 @@ pipeline {
     stages {
         stage("build"){
             steps {
-                echo 'building'
-                sh 'ls -alh'
+                sh 'docker build -t public-ecr-aws:latest .'
             }
         }
         stage("exec") {
             steps{
-                echo 'executing '
+                sh 'docker run --rm public-ecr-aws:latest ${ARG}'
             }
         }
         stage("cleanup"){
             steps {
+                sh 'docker image rm public-ecr-aws:latest'
                 echo 'cleaning up'
                 sh 'rm -rf * && rm -rf .git*'
                 sh 'ls -alh'
