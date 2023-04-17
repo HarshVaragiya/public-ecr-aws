@@ -252,8 +252,6 @@ func getImageManifestConfig(rawResultsChan, enrichedResultsChan chan *EcrResult,
 func main() {
 	threadCount := flag.Int("threads", 500, "initial thread count (between 1 and 2000. default is 500)")
 	tagSvcThreads := flag.Int("tag-threads", 20, "threads to run for fetching image tags")
-	//configSvcThreads := flag.Int("config-threads", 100, "threads to run for fetching image manifest / config")
-
 	outFileName := flag.String("output", "output.log", "output file to save findings to. default is output.log")
 	maxCrawlDepth := flag.Int("max-crawl-depth", 8, "max charset depth to scan for (between 4 and 17). default is 8")
 	outputOverwrite := flag.Bool("overwrite", false, "overwrite existing output file if it exists already")
@@ -299,7 +297,6 @@ func main() {
 	// repositoryTagsChan -> Enriched Data with ECR Repository , Registry & Image Tags
 	repositoryTagsChan := make(chan *EcrResult, 1000)
 	// repositoryTagsChan -> Enriched Data with Image Config
-	repositoryConfigChan := make(chan *EcrResult, 1000)
 
 	// Output Overwrite configuration
 	if _, err := os.Stat(*outFileName); errors.Is(err, os.ErrNotExist) {
@@ -349,8 +346,6 @@ func main() {
 	}
 	imageTagsWg.Wait()
 	close(repositoryTagsChan)
-	//imageConfigWg.Wait()
-	close(repositoryConfigChan)
 	saveResultsWg.Wait()
 	statsLock.RLock()
 	defer statsLock.RUnlock()
