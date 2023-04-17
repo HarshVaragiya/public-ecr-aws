@@ -359,7 +359,7 @@ func displayProgress() {
 		statsLock.RLock()
 		fmt.Printf("Progress - [Found %v Repositories | %v Okay | %v Tags] - Active Goroutine Count: %v %s\r", foundImageCount, imageWithTagCount, totalTagsFoundCount, activeGoroutines, bufferString)
 		statsLock.RUnlock()
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Second * 10)
 	}
 }
 
