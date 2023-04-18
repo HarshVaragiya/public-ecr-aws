@@ -315,6 +315,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	if err != nil {
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata", "errmsg": err.Error()}).Errorf("error marshalling metadata object")
 	} else {
+		log.Info(string(data))
 		rdb.LPush(ctx, "ecr-scanner-metadata", string(data))
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
 	}
