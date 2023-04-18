@@ -334,7 +334,9 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	if gotifyUrl, exists := os.LookupEnv("GOTIFY_URL"); exists {
 		title := fmt.Sprintf("public ecr scan %v finished", redisKeyPrefix)
 		message := fmt.Sprintf("scan summary: %s", string(data))
-		sendNotification(gotifyUrl, title, message, 9)
+		if err := sendNotification(gotifyUrl, title, message, 9); err != nil {
+			log.WithFields(log.Fields{"state": "redis", "action": "notify", "errmsg": err.Error()}).Error("error sending notification")
+		}
 	}
 
 	return nil
