@@ -150,3 +150,17 @@ func describeImageTags(repo *EcrRepositoryInfo) (*DescribeImageTagResponse, erro
 	}
 	return respStruct, nil
 }
+
+func sendNotification(gotifyUrl, title, message string, priority int) error {
+	client := httpClientPool.Get().(*fasthttp.Client)
+	defer httpClientPool.Put(client)
+
+	req := fasthttp.AcquireRequest()
+	req.SetRequestURI(gotifyUrl)
+	req.URI().QueryArgs().Add("message", message)
+	req.URI().QueryArgs().Add("title", title)
+	req.URI().QueryArgs().Add("priority", fmt.Sprintf("%d", priority))
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+	return client.Do(req, resp)
+}
