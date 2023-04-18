@@ -28,6 +28,7 @@ const (
 	REDIS_EXPORT_BATCH_SIZE         = 100
 	REDIS_FLATTEN_THREAD_COUNT      = 2
 	REDIS_EXPORT_THREAD_COUNT       = 4
+	REDIS_RESULT_SET_EXPIRY         = 24
 )
 
 var (
@@ -244,7 +245,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	flattenedResults := make(chan redis.Z, 2000)
 
 	// flatten the results
-	log.WithFields(log.Fields{"state": "redis"}).Infof("creating the redis result set")
+	log.WithFields(log.Fields{"state": "redis", "action": "map"}).Infof("mapping the redis result set ")
 	flattenWg := &sync.WaitGroup{}
 	flattenWg.Add(REDIS_FLATTEN_THREAD_COUNT)
 	for i := 0; i < REDIS_FLATTEN_THREAD_COUNT; i++ {
@@ -277,11 +278,11 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	// wait for flattening to complete
 	flattenWg.Wait()
 	close(flattenedResults)
-	log.WithFields(log.Fields{"state": "redis"}).Debugf("result set data mapping completed")
+	log.WithFields(log.Fields{"state": "redis", "action": "map"}).Debugf("result set data mapping completed")
 
 	// wait for redis result sets storing to complete
 	resultSetWg.Wait()
-	log.WithFields(log.Fields{"state": "redis"}).Infof("done storing result set in redis")
+	log.WithFields(log.Fields{"state": "redis", "action": "store"}).Infof("done storing result set in redis")
 
 	previousSetKey := fmt.Sprintf("ecr-scan:%d", redisKeyPrefix-1)
 
@@ -291,6 +292,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 
 	if exists, _ := rdb.Exists(ctx, previousSetKey).Result(); exists == 0 {
 		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis. not generating diff", previousSetKey)
+
 	} else {
 		resp, err := rdb.ZDiffStore(ctx, diffSetKey, currentSetKey, previousSetKey).Result()
 		if err != nil {
@@ -298,6 +300,13 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		}
 		newFindingsCount = int(resp)
 		log.WithFields(log.Fields{"state": "redis", "action": "diff", "count": resp}).Infof("generated diff in redis")
+
+		if _, err := rdb.Expire(ctx, previousSetKey, time.Hour*REDIS_RESULT_SET_EXPIRY).Result(); err != nil {
+			log.WithFields(log.Fields{"state": "redis", "action": "expire", "errmsg": err.Error()}).Error("error setting previous result set expiration time")
+		} else {
+			log.WithFields(log.Fields{"state": "redis", "action": "expire"}).Infof("set previous result set expiry to %v hours", REDIS_RESULT_SET_EXPIRY)
+
+		}
 	}
 
 	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("attempting to storing metadata")
