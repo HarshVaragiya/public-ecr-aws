@@ -14,6 +14,7 @@ pipeline {
                         sh '''docker run --rm \
                         -e REDIS_HOST=${REDIS_HOST} \
                         -e REDIS_PASSWORD=${REDIS_PASSWORD} \
+                        -e GOTIFY_URL=${GOTIFY_URL} \
                         -v $PWD:/pwd \
                         public-ecr-aws:latest ${ARGS}
                         '''
