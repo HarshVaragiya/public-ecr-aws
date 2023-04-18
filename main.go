@@ -392,14 +392,12 @@ func main() {
 	repositoryTagsChan := make(chan *EcrResult, 2000)
 
 	saveResultsWg := &sync.WaitGroup{}
-
+	saveResultsWg.Add(1)
 	if *redisStore {
 		if *redisKeyPrefix == -1 {
 			log.Fatal("redis-key must be supplied and must be an integer")
 		}
-		saveResultsWg.Add(1)
 		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, saveResultsWg)
-
 	} else {
 		// Save Results to disk
 
@@ -418,8 +416,6 @@ func main() {
 			log.Fatalf("could not open output file. error = %v", err)
 		}
 		defer outFile.Close()
-
-		saveResultsWg.Add(1)
 		go saveOutputToDisk(outFile, repositoryTagsChan, saveResultsWg)
 	}
 
@@ -444,11 +440,13 @@ func main() {
 	go displayProgress(*progressRefreshSeconds)
 
 	if err := getAllEcrImages(*threadCount, repositoryChan); err != nil {
-		log.Printf("error fetching images from aws ecr. error = %v", err)
+		log.Errorf("error fetching images from aws ecr. error = %v", err)
 	}
 	imageTagsWg.Wait()
 	close(repositoryTagsChan)
+	log.Info("done fetching all image tags. waiting to export results...")
 	saveResultsWg.Wait()
+	log.Info("exported results ...")
 	statsLock.RLock()
 	defer statsLock.RUnlock()
 	log.Infof("found %v ecr repositories. exiting ...", foundImageCount)
