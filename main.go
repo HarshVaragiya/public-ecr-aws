@@ -337,6 +337,8 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		if err := sendNotification(gotifyUrl, title, message, 9); err != nil {
 			log.WithFields(log.Fields{"state": "redis", "action": "notify", "errmsg": err.Error()}).Error("error sending notification")
 		}
+	} else {
+		log.WithFields(log.Fields{"state": "redis", "action": "notify", "errmsg": "GOTIFY_URL not found"}).Error("error sending notification")
 	}
 
 	return nil
