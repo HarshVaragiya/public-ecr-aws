@@ -26,6 +26,8 @@ const (
 	AWS_ECR_SEARCH_REQUEST_METHOD   = "POST"
 	SEARCH_KEYSPACE                 = "abcdefghijklmnopqrstuvwxyz"
 	REDIS_EXPORT_BATCH_SIZE         = 100
+	REDIS_FLATTEN_THREAD_COUNT      = 2
+	REDIS_EXPORT_THREAD_COUNT       = 4
 )
 
 var (
@@ -206,7 +208,7 @@ func getImageTags(imageChan chan *EcrRepositoryInfo, rawResultsChan chan *EcrRes
 	for image := range imageChan {
 		resp, err := describeImageTags(image)
 		if err != nil {
-			log.WithFields(log.Fields{"state": "tags", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName}).Debugf("error getting image tags")
+			log.WithFields(log.Fields{"state": "tags", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName}).Tracef("error getting image tags")
 			continue
 		}
 		tagsFound := len(*resp.ImageTagDetails)
@@ -227,8 +229,8 @@ func getImageTags(imageChan chan *EcrRepositoryInfo, rawResultsChan chan *EcrRes
 
 }
 
-func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPrefix int, wg *sync.WaitGroup) error {
-	wg.Done()
+func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPrefix int, wg *sync.WaitGroup, overwrite bool) error {
+	defer wg.Done()
 	redisHost, exists := os.LookupEnv("REDIS_HOST")
 	if !exists {
 		log.WithFields(log.Fields{"state": "redis", "errmsg": "REDIS_HOST not defined"}).Fatal("error getting redis connection configuration")
@@ -242,26 +244,40 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	flattenedResults := make(chan redis.Z, 2000)
 
 	// flatten the results
-	log.WithFields(log.Fields{"state": "redis"}).Debugf("creating the redis result set")
+	log.WithFields(log.Fields{"state": "redis"}).Infof("creating the redis result set")
 	flattenWg := &sync.WaitGroup{}
-	flattenWg.Add(1)
-	for i := 0; i < 1; i++ {
+	flattenWg.Add(REDIS_FLATTEN_THREAD_COUNT)
+	for i := 0; i < REDIS_FLATTEN_THREAD_COUNT; i++ {
 		go flattenEcrResults(results, flattenedResults, flattenWg)
 	}
 
 	// build result set
 	currentSetKey := fmt.Sprintf("ecr-scan:%d", redisKeyPrefix)
 	log.WithFields(log.Fields{"state": "redis"}).Infof("result set key: %v", currentSetKey)
+
+	if resultCount, err := rdb.Exists(ctx, currentSetKey).Result(); err != nil {
+		log.WithFields(log.Fields{"state": "redis", "action": "store", "errmsg": err.Error()}).Fatalf("error connecting to redis instance")
+	} else {
+		if resultCount != 0 {
+			if overwrite {
+				log.WithFields(log.Fields{"state": "redis", "action": "store"}).Infof("key [ %v ] will be recreated in redis", currentSetKey)
+				rdb.Del(ctx, currentSetKey)
+			} else {
+				log.WithFields(log.Fields{"state": "redis", "action": "store", "errmsg": "key exists exception"}).Fatalf("key [ %v ] already found in redis. overwrite flag not supplied! exiting. ", currentSetKey)
+			}
+		}
+	}
+
 	resultSetWg := &sync.WaitGroup{}
-	resultSetWg.Add(1)
-	for i := 0; i < 1; i++ {
+	resultSetWg.Add(REDIS_EXPORT_THREAD_COUNT)
+	for i := 0; i < REDIS_EXPORT_THREAD_COUNT; i++ {
 		go redisBuildResultSet(rdb, ctx, flattenedResults, currentSetKey, resultSetWg)
 	}
 
 	// wait for flattening to complete
 	flattenWg.Wait()
 	close(flattenedResults)
-	log.WithFields(log.Fields{"state": "redis"}).Debugf("result set data wrangling completed")
+	log.WithFields(log.Fields{"state": "redis"}).Debugf("result set data mapping completed")
 
 	// wait for redis result sets storing to complete
 	resultSetWg.Wait()
@@ -273,8 +289,8 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 
 	newFindingsCount := 0
 
-	if _, err := rdb.Exists(ctx, previousSetKey).Result(); err != nil {
-		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis", previousSetKey)
+	if exists, _ := rdb.Exists(ctx, previousSetKey).Result(); exists == 0 {
+		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis. not generating diff", previousSetKey)
 	} else {
 		resp, err := rdb.ZDiffStore(ctx, diffSetKey, currentSetKey, previousSetKey).Result()
 		if err != nil {
@@ -307,10 +323,10 @@ func redisBuildResultSet(rdb *redis.Client, ctx context.Context, results chan re
 	for result := range results {
 		if index == REDIS_EXPORT_BATCH_SIZE {
 			if resp := rdb.ZAdd(ctx, currentSetKey, nextFindings...); resp.Err() != nil {
-				log.WithFields(log.Fields{"state": "redis", "action": "build-result-set", "errmsg": resp.Err()}).Error("error saving results in redis!")
+				log.WithFields(log.Fields{"state": "redis", "action": "store", "errmsg": resp.Err()}).Error("error saving results in redis!")
 				return resp.Err()
 			}
-			log.WithFields(log.Fields{"state": "redis"}).Debugf("pushed batch results to redis")
+			log.WithFields(log.Fields{"state": "redis", "action": "store"}).Debugf("pushed batch results to redis")
 			index = 0
 		}
 		if index == 0 {
@@ -321,10 +337,10 @@ func redisBuildResultSet(rdb *redis.Client, ctx context.Context, results chan re
 	}
 	// flush out anything left after channel is closed
 	if resp := rdb.ZAdd(ctx, currentSetKey, nextFindings...); resp.Err() != nil {
-		log.WithFields(log.Fields{"state": "redis", "action": "build-result-set", "errmsg": resp.Err()}).Error("error saving results in redis!")
+		log.WithFields(log.Fields{"state": "redis", "action": "store", "errmsg": resp.Err()}).Error("error saving results in redis!")
 		return resp.Err()
 	}
-	log.WithFields(log.Fields{"state": "redis"}).Debugf("pushed batch results to redis")
+	log.WithFields(log.Fields{"state": "redis", "action": "store"}).Debugf("pushed final batch of results to redis")
 	return nil
 }
 
@@ -397,7 +413,7 @@ func main() {
 		if *redisKeyPrefix == -1 {
 			log.Fatal("redis-key must be supplied and must be an integer")
 		}
-		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, saveResultsWg)
+		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, saveResultsWg, *outputOverwrite)
 	} else {
 		// Save Results to disk
 

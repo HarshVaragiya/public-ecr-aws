@@ -134,6 +134,9 @@ func describeImageTags(repo *EcrRepositoryInfo) (*DescribeImageTagResponse, erro
 		log.Error("error making http request")
 		return nil, err
 	}
+	if resp.StatusCode() == 400 {
+		return nil, fmt.Errorf("RepositoryNotFoundException")
+	}
 	if resp.StatusCode() != 200 {
 		log.Debugf("error making http request [%d] - %s", resp.StatusCode(), resp.Body())
 		return nil, fmt.Errorf("error making http request")
