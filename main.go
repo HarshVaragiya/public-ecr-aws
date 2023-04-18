@@ -392,7 +392,7 @@ func main() {
 	debug := flag.Bool("debug", false, "enable debug logs")
 	trace := flag.Bool("trace", false, "enable trace level logs")
 	outLogFile := flag.String("logs", "", "save output logs to given file")
-	redisStore := flag.Bool("redis-out", false, "save the output to redis instance. uses REDIS_HOST & REDIS_PASSWORD environment variables")
+	redisStore := flag.Bool("redis-out", false, "save the output to redis instance instead of disk. uses REDIS_HOST & REDIS_PASSWORD environment variables")
 	redisKeyPrefix := flag.Int("redis-key", -1, "redis key to use for storing data. key -1 will be compared against current records.")
 	progressRefreshSeconds := flag.Int("refresh", 1, "refresh interval in seconds")
 
