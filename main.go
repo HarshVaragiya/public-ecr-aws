@@ -305,7 +305,6 @@ func redisBuildResultSet(rdb *redis.Client, ctx context.Context, results chan re
 	var nextFindings []redis.Z
 	index := 0
 	for result := range results {
-		log.Info("processing result: %v", result.Member)
 		if index == REDIS_EXPORT_BATCH_SIZE {
 			if resp := rdb.ZAdd(ctx, currentSetKey, nextFindings...); resp.Err() != nil {
 				log.WithFields(log.Fields{"state": "redis", "action": "build-result-set", "errmsg": resp.Err()}).Error("error saving results in redis!")
