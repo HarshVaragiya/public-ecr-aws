@@ -9,20 +9,16 @@ pipeline {
         }
         stage("exec") {
             steps{
-                withCredentials([usernamePassword(credentialsId: 'redis-connection-string', passwordVariable: 'REDIS_PASSWORD', usernameVariable: 'REDIS_HOST')]) {
-                    sh '''docker run --rm \
-                    -e REDIS_HOST=${REDIS_HOST} \
-                    -e REDIS_PASSWORD=${REDIS_PASSWORD} \
-                    -v $PWD:/pwd \
-                    public-ecr-aws:latest ${ARGS}
-                    '''
+                withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
+                    withCredentials([usernamePassword(credentialsId: 'redis-connection-string', passwordVariable: 'REDIS_PASSWORD', usernameVariable: 'REDIS_HOST')]) {
+                        sh '''docker run --rm \
+                        -e REDIS_HOST=${REDIS_HOST} \
+                        -e REDIS_PASSWORD=${REDIS_PASSWORD} \
+                        -v $PWD:/pwd \
+                        public-ecr-aws:latest ${ARGS}
+                        '''
+                    }
                 }
-                // withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
-                //     sh '''
-                //         FINDINGS=$(wc -l output.log)
-                //         curl "${GOTIFY_URL}" -F "title=public ecr scan finished" -F "message=total public repositories found: ${FINDINGS}" -F "priority=6"
-                //     '''
-                // }
             }
         }
         stage("cleanup"){

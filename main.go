@@ -321,7 +321,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	}
 	statsLock.Unlock()
 
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := json.MarshalIndent(value, "", "    ")
 	if err != nil {
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata", "errmsg": err.Error()}).Errorf("error marshalling metadata object")
 	} else {
@@ -330,6 +330,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
 	}
 
+	// send notification
 	if gotifyUrl, exists := os.LookupEnv("GOTIFY_URL"); exists {
 		title := fmt.Sprintf("public ecr scan %v finished", redisKeyPrefix)
 		message := fmt.Sprintf("scan summary: %s", string(data))
