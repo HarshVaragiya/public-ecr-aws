@@ -37,6 +37,14 @@ type DescribeImageTagResponse struct {
 	ImageTagDetails *[]ImageTagDetails `json:"imageTagDetails"`
 }
 
+type RedisMetaDataValue struct {
+	TotalImages   int
+	TotalFindings int
+	NewFindings   int
+	DateTime      string
+	SetKey        string
+}
+
 type ImageTagDetails struct {
 	ImageTag    string      `json:"imageTag"`
 	CreatedAt   time.Time   `json:"createdAt"`

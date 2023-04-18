@@ -51,6 +51,31 @@ func GetNewRegistryManager() *RegistryManager {
 	return rm
 }
 
+func getImageManifestConfig(rawResultsChan, enrichedResultsChan chan *EcrResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	registryManager := GetNewRegistryManager()
+	for rawResult := range rawResultsChan {
+		for _, imageTagDetails := range *rawResult.ImageTags.ImageTagDetails {
+			imageChecksum := imageTagDetails.ImageDetail.ImageDigest
+			image := rawResult.RepositoryInfo
+			manifest, err := registryManager.getManifestForImageTag(image, imageChecksum)
+
+			if err != nil {
+				log.WithFields(log.Fields{"state": "manifest", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Error("error fetching manifest")
+				continue
+			}
+			config, err := registryManager.getConfigFromImageManifest(image, imageChecksum, manifest)
+			if err != nil {
+				log.WithFields(log.Fields{"state": "manifest", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Error("error fetching config from specified manifest!")
+				continue
+			}
+			rawResult.ManifestConfig = config
+			log.WithFields(log.Fields{"state": "manifest", "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Debug("done fetching config")
+			enrichedResultsChan <- rawResult
+		}
+	}
+}
+
 func (rm *RegistryManager) RefreshAuthToken() error {
 	time.Sleep(time.Second * 10)
 	log.WithFields(log.Fields{"state": "registry", "action": "token-refresh"}).Debugf("attempting token refresh")

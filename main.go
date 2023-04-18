@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpproxy"
@@ -23,6 +25,7 @@ const (
 	AWS_ECR_DESCRIBE_IMAGE_TAGS_URI = "/describeImageTags"
 	AWS_ECR_SEARCH_REQUEST_METHOD   = "POST"
 	SEARCH_KEYSPACE                 = "abcdefghijklmnopqrstuvwxyz"
+	REDIS_EXPORT_BATCH_SIZE         = 100
 )
 
 var (
@@ -81,7 +84,7 @@ func parseAwsEcrResponse(searchInput *AwsEcrCrawlInput, resp *AwsEcrSearchRespon
 				statsLock.Lock()
 				foundImageCount += 1
 				statsLock.Unlock()
-				log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "state": "deepscan", "registryAlias": image.PrimaryRegistryAliasName, "repoName": image.RepositoryName}).Tracef("added image to output")
+				log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "state": "deepscan", "registry-alias": image.PrimaryRegistryAliasName, "repo-name": image.RepositoryName}).Tracef("added image to output")
 			}
 		} else {
 			imageMap[image.PrimaryRegistryAliasName] = make(map[string]bool)
@@ -90,7 +93,7 @@ func parseAwsEcrResponse(searchInput *AwsEcrCrawlInput, resp *AwsEcrSearchRespon
 			statsLock.Lock()
 			foundImageCount += 1
 			statsLock.Unlock()
-			log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "state": "deepscan", "registryAlias": image.PrimaryRegistryAliasName, "repoName": image.RepositoryName}).Tracef("added image to output")
+			log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "state": "deepscan", "registry-alias": image.PrimaryRegistryAliasName, "repo-name": image.RepositoryName}).Tracef("added image to output")
 		}
 	}
 	imageMapLock.Unlock()
@@ -102,17 +105,17 @@ func getEcrImagesFromSearchTerm(searchInput *AwsEcrCrawlInput, imageChan chan *E
 	statsLock.Lock()
 	activeGoroutines += 1
 	statsLock.Unlock()
-	log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "state": "scan", "currentDepth": searchInput.CurrentLevel}).Tracef("goroutine started")
+	log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "state": "scan", "current-depth": searchInput.CurrentLevel}).Tracef("goroutine started")
 	for {
 		resp, err := makeEcrSearchRequest(searchInput.SearchTerm, nextToken)
 		if err != nil {
-			log.WithFields(log.Fields{"errormsg": err.Error(), "searchTerm": searchInput.SearchTerm, "nextToken": nextToken, "state": "scan"}).Errorf("error getting initial response & count from the server")
+			log.WithFields(log.Fields{"errormsg": err.Error(), "search-term": searchInput.SearchTerm, "next-token": nextToken, "state": "scan"}).Errorf("error getting initial response & count from the server")
 			break
 		}
 		searchTotalResults := resp.TotalResults
 		if searchTotalResults > 2500 {
 			if searchInput.CurrentLevel < MAX_CRAWL_DEPTH {
-				log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "imageCount": searchTotalResults, "state": "scan", "currentDepth": searchInput.CurrentLevel}).Debugf("forking")
+				log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "image-count": searchTotalResults, "state": "scan", "current-depth": searchInput.CurrentLevel}).Debugf("forking")
 				nextSearchChars := strings.Split(SEARCH_KEYSPACE, "")
 				childWg := &sync.WaitGroup{}
 				childWg.Add(len(nextSearchChars))
@@ -127,24 +130,24 @@ func getEcrImagesFromSearchTerm(searchInput *AwsEcrCrawlInput, imageChan chan *E
 				childWg.Wait()
 				break
 			} else {
-				log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "imageCount": searchTotalResults, "state": "scan", "currentDepth": searchInput.CurrentLevel}).Errorf("reached max depth. returning")
+				log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "image-count": searchTotalResults, "state": "scan", "current-depth": searchInput.CurrentLevel}).Errorf("reached max depth. returning")
 				break
 			}
 		} else {
 			if searchTotalResults == 0 {
-				log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "imageCount": 0, "state": "scan"}).Trace("returning")
+				log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "image-count": 0, "state": "scan"}).Trace("returning")
 				break
 			}
-			log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "imageCount": searchTotalResults, "state": "scan"}).Debugf("running deepscan")
+			log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "image-count": searchTotalResults, "state": "scan"}).Debugf("running deepscan")
 			parseAwsEcrResponse(searchInput, resp, imageChan)
 			nextToken = resp.NextToken
 			if nextToken == "" {
-				log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "state": "scan", "currentDepth": searchInput.CurrentLevel}).Tracef("done scanning all images. returning")
+				log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "state": "scan", "current-depth": searchInput.CurrentLevel}).Tracef("done scanning all images. returning")
 				break
 			}
 		}
 	}
-	log.WithFields(log.Fields{"searchTerm": searchInput.SearchTerm, "state": "deepscan", "currentDepth": searchInput.CurrentLevel}).Debugf("done finding all relevant images")
+	log.WithFields(log.Fields{"search-term": searchInput.SearchTerm, "state": "deepscan", "current-depth": searchInput.CurrentLevel}).Debugf("done finding all relevant images")
 	statsLock.Lock()
 	activeGoroutines -= 1
 	statsLock.Unlock()
@@ -163,7 +166,7 @@ func getAllEcrImages(threadCount int, imageChan chan *EcrRepositoryInfo) error {
 							SearchTerm:   inputString,
 							CurrentLevel: 4,
 						}
-						log.WithFields(log.Fields{"searchTerm": inputString, "state": "input"}).Tracef("added to the input chan")
+						log.WithFields(log.Fields{"search-term": inputString, "state": "input"}).Tracef("added to the input chan")
 					}
 				}
 			}
@@ -177,16 +180,16 @@ func getAllEcrImages(threadCount int, imageChan chan *EcrRepositoryInfo) error {
 	for i := 0; i < threadCount; i++ {
 		parentWg.Add(1)
 		go func(i int) {
-			log.WithFields(log.Fields{"state": "main", "threadId": i}).Tracef("starting thread")
+			log.WithFields(log.Fields{"state": "main", "thread-id": i}).Tracef("starting thread")
 			for searchInput := range inputChan {
 				childWg := &sync.WaitGroup{}
 				childWg.Add(1)
-				log.WithFields(log.Fields{"state": "main", "threadId": i, "searchTerm": searchInput.SearchTerm}).Tracef("thread started scanning")
+				log.WithFields(log.Fields{"state": "main", "thread-id": i, "search-term": searchInput.SearchTerm}).Tracef("thread started scanning")
 				getEcrImagesFromSearchTerm(searchInput, imageChan, childWg)
 				childWg.Wait()
-				log.WithFields(log.Fields{"state": "main", "threadId": i, "searchTerm": searchInput.SearchTerm}).Tracef("thread finished scanning")
+				log.WithFields(log.Fields{"state": "main", "thread-id": i, "search-term": searchInput.SearchTerm}).Tracef("thread finished scanning")
 			}
-			log.WithFields(log.Fields{"state": "main", "threadId": i}).Trace("thread exited!")
+			log.WithFields(log.Fields{"state": "main", "thread-id": i}).Trace("thread exited!")
 			parentWg.Done()
 		}(i)
 	}
@@ -208,7 +211,7 @@ func getImageTags(imageChan chan *EcrRepositoryInfo, rawResultsChan chan *EcrRes
 		}
 		tagsFound := len(*resp.ImageTagDetails)
 		if tagsFound > 0 {
-			log.WithFields(log.Fields{"state": "tags", "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "tagCount": tagsFound}).Tracef("found tags!")
+			log.WithFields(log.Fields{"state": "tags", "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "tag-count": tagsFound}).Tracef("found tags!")
 			result := &EcrResult{
 				RepositoryInfo: image,
 				ImageTags:      resp,
@@ -224,27 +227,117 @@ func getImageTags(imageChan chan *EcrRepositoryInfo, rawResultsChan chan *EcrRes
 
 }
 
-func getImageManifestConfig(rawResultsChan, enrichedResultsChan chan *EcrResult, wg *sync.WaitGroup) {
-	defer wg.Done()
-	registryManager := GetNewRegistryManager()
-	for rawResult := range rawResultsChan {
-		for _, imageTagDetails := range *rawResult.ImageTags.ImageTagDetails {
-			imageChecksum := imageTagDetails.ImageDetail.ImageDigest
-			image := rawResult.RepositoryInfo
-			manifest, err := registryManager.getManifestForImageTag(image, imageChecksum)
+func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPrefix int, wg *sync.WaitGroup) error {
+	wg.Done()
+	redisHost, exists := os.LookupEnv("REDIS_HOST")
+	if !exists {
+		log.WithFields(log.Fields{"state": "redis", "errmsg": "REDIS_HOST not defined"}).Fatal("error getting redis connection configuration")
+	}
+	redisPassword, exists := os.LookupEnv("REDIS_PASSWORD")
+	if !exists {
+		log.WithFields(log.Fields{"state": "redis", "errmsg": "REDIS_PASSWORD not defined"}).Fatal("error getting redis connection configuration")
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: redisHost, Password: redisPassword, DB: 1})
 
-			if err != nil {
-				log.WithFields(log.Fields{"state": "manifest", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Error("error fetching manifest")
-				continue
+	flattenedResults := make(chan redis.Z, 2000)
+
+	// flatten the results
+	log.WithFields(log.Fields{"state": "redis"}).Debugf("creating the redis result set")
+	flattenWg := &sync.WaitGroup{}
+	flattenWg.Add(1)
+	for i := 0; i < 1; i++ {
+		go flattenEcrResults(results, flattenedResults, flattenWg)
+	}
+
+	// build result set
+	currentSetKey := fmt.Sprintf("ecr-scan:%d", redisKeyPrefix)
+	log.WithFields(log.Fields{"state": "redis"}).Infof("result set key: %v", currentSetKey)
+	resultSetWg := &sync.WaitGroup{}
+	resultSetWg.Add(1)
+	for i := 0; i < 1; i++ {
+		go redisBuildResultSet(rdb, ctx, flattenedResults, currentSetKey, resultSetWg)
+	}
+
+	// wait for flattening to complete
+	flattenWg.Wait()
+	close(flattenedResults)
+	log.WithFields(log.Fields{"state": "redis"}).Debugf("result set data wrangling completed")
+
+	// wait for redis result sets storing to complete
+	resultSetWg.Wait()
+	log.WithFields(log.Fields{"state": "redis"}).Infof("done storing result set in redis")
+
+	previousSetKey := fmt.Sprintf("ecr-scan:%d", redisKeyPrefix-1)
+
+	diffSetKey := fmt.Sprintf("ecr-diff:%d", redisKeyPrefix)
+
+	newFindingsCount := 0
+
+	if _, err := rdb.Exists(ctx, previousSetKey).Result(); err != nil {
+		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis", previousSetKey)
+	} else {
+		resp, err := rdb.ZDiffStore(ctx, diffSetKey, currentSetKey, previousSetKey).Result()
+		if err != nil {
+			log.WithFields(log.Fields{"state": "redis", "action": "diff", "errmsg": err.Error()}).Error("error generating diff between sets")
+		}
+		newFindingsCount = int(resp)
+		log.WithFields(log.Fields{"state": "redis", "action": "diff", "count": resp}).Infof("generated diff in redis")
+	}
+
+	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("storing metadata")
+	statsLock.Lock()
+	value := &RedisMetaDataValue{
+		TotalImages:   imageWithTagCount,
+		TotalFindings: totalTagsFoundCount,
+		NewFindings:   newFindingsCount,
+		DateTime:      fmt.Sprintf("%d", redisKeyPrefix),
+		SetKey:        currentSetKey,
+	}
+	statsLock.Unlock()
+	rdb.LPush(ctx, "ecr-scanner-metadata", value)
+	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
+
+	return nil
+}
+
+func redisBuildResultSet(rdb *redis.Client, ctx context.Context, results chan redis.Z, currentSetKey string, wg *sync.WaitGroup) error {
+	defer wg.Done()
+	var nextFindings []redis.Z
+	index := 0
+	for result := range results {
+		log.Info("processing result: %v", result.Member)
+		if index == REDIS_EXPORT_BATCH_SIZE {
+			if resp := rdb.ZAdd(ctx, currentSetKey, nextFindings...); resp.Err() != nil {
+				log.WithFields(log.Fields{"state": "redis", "action": "build-result-set", "errmsg": resp.Err()}).Error("error saving results in redis!")
+				return resp.Err()
 			}
-			config, err := registryManager.getConfigFromImageManifest(image, imageChecksum, manifest)
-			if err != nil {
-				log.WithFields(log.Fields{"state": "manifest", "errormsg": err.Error(), "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Error("error fetching config from specified manifest!")
-				continue
+			log.WithFields(log.Fields{"state": "redis"}).Debugf("pushed batch results to redis")
+			index = 0
+		}
+		if index == 0 {
+			nextFindings = make([]redis.Z, REDIS_EXPORT_BATCH_SIZE)
+		}
+		nextFindings[index] = result
+		index += 1
+	}
+	// flush out anything left after channel is closed
+	if resp := rdb.ZAdd(ctx, currentSetKey, nextFindings...); resp.Err() != nil {
+		log.WithFields(log.Fields{"state": "redis", "action": "build-result-set", "errmsg": resp.Err()}).Error("error saving results in redis!")
+		return resp.Err()
+	}
+	log.WithFields(log.Fields{"state": "redis"}).Debugf("pushed batch results to redis")
+	return nil
+}
+
+func flattenEcrResults(results chan *EcrResult, flattednedResults chan redis.Z, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for result := range results {
+		for _, tagDetails := range *result.ImageTags.ImageTagDetails {
+			redisValue := fmt.Sprintf("%v/%v:%v", result.RepositoryInfo.PrimaryRegistryAliasName, result.RepositoryInfo.RepositoryName, tagDetails.ImageTag)
+			flattednedResults <- redis.Z{
+				Member: redisValue,
+				Score:  float64(result.RepositoryInfo.DownloadCount),
 			}
-			rawResult.ManifestConfig = config
-			log.WithFields(log.Fields{"state": "manifest", "registry": image.PrimaryRegistryAliasName, "repository": image.RepositoryName, "checksum": imageChecksum}).Debug("done fetching config")
-			enrichedResultsChan <- rawResult
 		}
 	}
 }
@@ -258,6 +351,10 @@ func main() {
 	debug := flag.Bool("debug", false, "enable debug logs")
 	trace := flag.Bool("trace", false, "enable trace level logs")
 	outLogFile := flag.String("logs", "", "save output logs to given file")
+	redisStore := flag.Bool("redis-out", false, "save the output to redis instance. uses REDIS_HOST & REDIS_PASSWORD environment variables")
+	redisKeyPrefix := flag.Int("redis-key", -1, "redis key to use for storing data. key -1 will be compared against current records.")
+	progressRefreshSeconds := flag.Int("refresh", 1, "refresh interval in seconds")
+
 	flag.Parse()
 
 	// Sanity Check
@@ -292,34 +389,40 @@ func main() {
 	MAX_CRAWL_DEPTH = *maxCrawlDepth
 	imageMap = make(map[string]map[string]bool)
 
-	// repositoryChan -> Raw Channel with ECR Repository & Registry Names
 	repositoryChan := make(chan *EcrRepositoryInfo, 1000)
-	// repositoryTagsChan -> Enriched Data with ECR Repository , Registry & Image Tags
-	repositoryTagsChan := make(chan *EcrResult, 1000)
-	// repositoryTagsChan -> Enriched Data with Image Config
+	repositoryTagsChan := make(chan *EcrResult, 2000)
 
-	// Output Overwrite configuration
-	if _, err := os.Stat(*outFileName); errors.Is(err, os.ErrNotExist) {
-		log.Debugf("output file does not exist and will be created")
-	} else {
-		if *outputOverwrite {
-			log.Infof("overwriting existing output file")
-		} else {
-			log.Fatalf("output file exists")
-		}
-	}
-
-	// Load Output File
-	outFile, err := os.OpenFile(*outFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		log.Fatalf("could not open output file. error = %v", err)
-	}
-	defer outFile.Close()
-
-	// Save Results to Disk
 	saveResultsWg := &sync.WaitGroup{}
-	saveResultsWg.Add(1)
-	go saveOutputToDisk(outFile, repositoryTagsChan, saveResultsWg)
+
+	if *redisStore {
+		if *redisKeyPrefix == -1 {
+			log.Fatal("redis-key must be supplied and must be an integer")
+		}
+		saveResultsWg.Add(1)
+		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, saveResultsWg)
+
+	} else {
+		// Save Results to disk
+
+		// Output Overwrite configuration
+		if _, err := os.Stat(*outFileName); errors.Is(err, os.ErrNotExist) {
+			log.Debugf("output file does not exist and will be created")
+		} else {
+			if *outputOverwrite {
+				log.Infof("overwriting existing output file")
+			} else {
+				log.Fatalf("output file exists")
+			}
+		}
+		outFile, err := os.OpenFile(*outFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Fatalf("could not open output file. error = %v", err)
+		}
+		defer outFile.Close()
+
+		saveResultsWg.Add(1)
+		go saveOutputToDisk(outFile, repositoryTagsChan, saveResultsWg)
+	}
 
 	// Getting The Image Tags
 	imageTagsWg := &sync.WaitGroup{}
@@ -336,10 +439,10 @@ func main() {
 	// 	time.Sleep(time.Second)
 	// }
 
-	log.WithFields(log.Fields{"threadCount": *threadCount, "maxDepth": MAX_CRAWL_DEPTH}).Info("starting public ecr gallery scan")
+	log.WithFields(log.Fields{"thread-count": *threadCount, "max-depth": MAX_CRAWL_DEPTH}).Info("starting public ecr gallery scan")
 
 	// Display Progress line
-	go displayProgress()
+	go displayProgress(*progressRefreshSeconds)
 
 	if err := getAllEcrImages(*threadCount, repositoryChan); err != nil {
 		log.Printf("error fetching images from aws ecr. error = %v", err)
@@ -352,14 +455,14 @@ func main() {
 	log.Infof("found %v ecr repositories. exiting ...", foundImageCount)
 }
 
-func displayProgress() {
+func displayProgress(progressRefreshSeconds int) {
 	time.Sleep(time.Second)
 	bufferString := strings.Repeat(" ", 25)
 	for {
 		statsLock.RLock()
 		fmt.Printf("Progress - [Found %v Repositories | %v Okay | %v Tags] - Active Goroutine Count: %v %s\r", foundImageCount, imageWithTagCount, totalTagsFoundCount, activeGoroutines, bufferString)
 		statsLock.RUnlock()
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * time.Duration(int64(progressRefreshSeconds)))
 	}
 }
 
