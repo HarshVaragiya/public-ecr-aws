@@ -300,18 +300,24 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		log.WithFields(log.Fields{"state": "redis", "action": "diff", "count": resp}).Infof("generated diff in redis")
 	}
 
-	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("storing metadata")
+	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("attempting to storing metadata")
 	statsLock.Lock()
 	value := &RedisMetaDataValue{
 		TotalImages:   imageWithTagCount,
 		TotalFindings: totalTagsFoundCount,
 		NewFindings:   newFindingsCount,
-		DateTime:      fmt.Sprintf("%d", redisKeyPrefix),
+		DateTime:      time.Now().Format("01-02-2006 15:04:05"),
 		SetKey:        currentSetKey,
 	}
 	statsLock.Unlock()
-	rdb.LPush(ctx, "ecr-scanner-metadata", value)
-	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
+
+	data, err := json.Marshal(value)
+	if err != nil {
+		log.WithFields(log.Fields{"state": "redis", "action": "metadata", "errmsg": err.Error()}).Errorf("error marshalling metadata object")
+	} else {
+		rdb.LPush(ctx, "ecr-scanner-metadata", string(data))
+		log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
+	}
 
 	return nil
 }
