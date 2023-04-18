@@ -292,7 +292,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 
 	if exists, _ := rdb.Exists(ctx, previousSetKey).Result(); exists == 0 {
 		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis. not generating diff", previousSetKey)
-
+		diffSetKey = ""
 	} else {
 		resp, err := rdb.ZDiffStore(ctx, diffSetKey, currentSetKey, previousSetKey).Result()
 		if err != nil {
@@ -317,6 +317,7 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		NewFindings:   newFindingsCount,
 		DateTime:      time.Now().Format("01-02-2006 15:04:05"),
 		SetKey:        currentSetKey,
+		DiffKey:       diffSetKey,
 	}
 	statsLock.Unlock()
 

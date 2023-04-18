@@ -38,11 +38,12 @@ type DescribeImageTagResponse struct {
 }
 
 type RedisMetaDataValue struct {
-	TotalImages   int
-	TotalFindings int
-	NewFindings   int
-	DateTime      string
-	SetKey        string
+	TotalImages   int    `json:"totalImages"`
+	TotalFindings int    `json:"totalFindings"`
+	NewFindings   int    `json:"newFindings"`
+	DateTime      string `json:"timestamp"`
+	SetKey        string `json:"setKey"`
+	DiffKey       string `json:"diffSetKey"`
 }
 
 type ImageTagDetails struct {
