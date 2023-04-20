@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,7 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttpproxy"
 )
 
 const (
@@ -54,10 +52,10 @@ var (
 	httpClientPool = sync.Pool{
 		New: func() interface{} {
 			return &fasthttp.Client{
-				Dial: fasthttpproxy.FasthttpProxyHTTPDialer(),
-				TLSConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
+				// Dial: fasthttpproxy.FasthttpProxyHTTPDialer(),
+				// TLSConfig: &tls.Config{
+				// 	InsecureSkipVerify: true,
+				// },
 			}
 		},
 	}
@@ -325,13 +323,14 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	if err != nil {
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata", "errmsg": err.Error()}).Errorf("error marshalling metadata object")
 	} else {
-		log.Info(string(data))
+		fmt.Printf("\n\nScan Summary: \n%s \n\n", data)
 		rdb.LPush(ctx, "ecr-scanner-metadata", string(data))
 		log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("done saving metadata")
 	}
 
 	// send notification
 	if gotifyUrl, exists := os.LookupEnv("GOTIFY_URL"); exists {
+		log.WithFields(log.Fields{"state": "redis", "action": "notify"}).Infof("attempting to send notification to %v", gotifyUrl)
 		title := fmt.Sprintf("public ecr scan %v finished", redisKeyPrefix)
 		message := fmt.Sprintf("scan summary: %s", string(data))
 		if err := sendNotification(gotifyUrl, title, message, 9); err != nil {
