@@ -228,7 +228,7 @@ func getImageTags(imageChan chan *EcrRepositoryInfo, rawResultsChan chan *EcrRes
 
 }
 
-func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPrefix int, wg *sync.WaitGroup, overwrite bool) error {
+func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPrefix int, redisBacklogKey string, wg *sync.WaitGroup, overwrite bool) error {
 	defer wg.Done()
 	redisHost, exists := os.LookupEnv("REDIS_HOST")
 	if !exists {
@@ -298,6 +298,14 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 		}
 		newFindingsCount = int(resp)
 		log.WithFields(log.Fields{"state": "redis", "action": "diff", "count": resp}).Infof("generated diff in redis")
+
+		input := &redis.ZStore{
+			Keys: []string{redisBacklogKey, diffSetKey},
+		}
+
+		if _, err := rdb.ZUnionStore(ctx, redisBacklogKey, input).Result(); err != nil {
+			log.WithFields(log.Fields{"state": "redis", "action": "queue", "status": "error", "errmsg": err.Error()}).Errorf("error adding diff set to queue")
+		}
 
 		if _, err := rdb.Expire(ctx, previousSetKey, time.Hour*REDIS_RESULT_SET_EXPIRY).Result(); err != nil {
 			log.WithFields(log.Fields{"state": "redis", "action": "expire", "errmsg": err.Error()}).Error("error setting previous result set expiration time")
@@ -396,6 +404,7 @@ func main() {
 	redisStore := flag.Bool("redis-out", false, "save the output to redis instance instead of disk. uses REDIS_HOST & REDIS_PASSWORD environment variables")
 	redisKeyPrefix := flag.Int("redis-key", -1, "redis key to use for storing data. key -1 will be compared against current records.")
 	progressRefreshSeconds := flag.Int("refresh", 1, "refresh interval in seconds")
+	redisBacklogKey := flag.String("redis-backlog-key", "todo-list", "key with todo list of images to be scanned next")
 
 	flag.Parse()
 
@@ -440,7 +449,7 @@ func main() {
 		if *redisKeyPrefix == -1 {
 			log.Fatal("redis-key must be supplied and must be an integer")
 		}
-		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, saveResultsWg, *outputOverwrite)
+		go sendResultsToRedis(context.Background(), repositoryTagsChan, *redisKeyPrefix, *redisBacklogKey, saveResultsWg, *outputOverwrite)
 	} else {
 		// Save Results to disk
 
