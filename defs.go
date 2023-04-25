@@ -162,5 +162,7 @@ func sendNotification(gotifyUrl, title, message string, priority int) error {
 	req.URI().QueryArgs().Add("priority", fmt.Sprintf("%d", priority))
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	return client.Do(req, resp)
+	err := client.Do(req, resp)
+	log.Infof("notification server response code: %d [%s]", resp.StatusCode(), string(resp.Body()))
+	return err
 }
