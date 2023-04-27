@@ -157,6 +157,7 @@ func sendNotification(gotifyUrl, title, message string, priority int) error {
 
 	req := fasthttp.AcquireRequest()
 	req.SetRequestURI(gotifyUrl)
+	req.Header.SetMethod("POST")
 	req.URI().QueryArgs().Add("message", message)
 	req.URI().QueryArgs().Add("title", title)
 	req.URI().QueryArgs().Add("priority", fmt.Sprintf("%d", priority))
