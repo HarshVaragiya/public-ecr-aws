@@ -10,6 +10,14 @@ pipeline {
         }
         stage("build"){
             steps {
+                withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
+                    sh '''
+                    curl ${GOTIFY_URL} \
+                        -F "title=${JOB_NAME} trigerrered" \
+                        -F "message=build #${BUILD_NUMBER} in progress ${BUILD_URL}" \
+                        -F "priority=9"
+                    '''
+                }
                 sh "docker build -t ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ."
                 sh "docker tag ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ${REPOSITORY}/public-repo-scanner:${BUILD_NUMBER}"
             }

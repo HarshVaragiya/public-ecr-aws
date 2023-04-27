@@ -15,6 +15,14 @@ pipeline {
         stage("exec") {
             steps{
                 withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
+                    sh '''
+                    curl ${GOTIFY_URL} \
+                        -F "title=${JOB_NAME} trigerrered" \
+                        -F "message=build #${BUILD_NUMBER} in progress ${BUILD_URL}. Program Args: ${ARGS}" \
+                        -F "priority=9"
+                    '''
+                }
+                withCredentials([string(credentialsId: 'gotify-url', variable: 'GOTIFY_URL')]) {
                     withCredentials([usernamePassword(credentialsId: 'redis-connection-string', passwordVariable: 'REDIS_PASSWORD', usernameVariable: 'REDIS_HOST')]) {
                         sh '''docker run --rm \
                         -e REDIS_HOST=${REDIS_HOST} \
