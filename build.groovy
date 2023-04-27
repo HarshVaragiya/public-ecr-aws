@@ -11,11 +11,13 @@ pipeline {
         stage("build"){
             steps {
                 sh "docker build -t ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ."
+                sh "docker tag ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ${REPOSITORY}/public-repo-scanner:${BUILD_NUMBER} ."
             }
         }
         stage("push") {
             steps{
                 sh "docker push ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG}"
+                sh "docker push ${REPOSITORY}/public-repo-scanner:${BUILD_NUMBER}"
             }
         }
         stage("cleanup"){
