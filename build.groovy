@@ -11,7 +11,7 @@ pipeline {
         stage("build"){
             steps {
                 sh "docker build -t ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ."
-                sh "docker tag ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ${REPOSITORY}/public-repo-scanner:${BUILD_NUMBER} ."
+                sh "docker tag ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} ${REPOSITORY}/public-repo-scanner:${BUILD_NUMBER}"
             }
         }
         stage("push") {
