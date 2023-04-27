@@ -1,10 +1,15 @@
 pipeline {
     agent any
     stages {
-        stage("build"){
+        stage("login"){
             steps {
-                // rupasa k naap p chal ja please
-                sh 'docker build -t public-ecr-aws:latest .'
+                sh "aws ecr get-login-password --region ap-south-2 | docker login --username AWS --password-stdin ${REPOSITORY}"
+            }
+        }
+        stage("pull") {
+            steps{
+                sh "docker pull ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG}"
+                sh "docker tag ${REPOSITORY}/public-repo-scanner:${IMAGE_TAG} public-ecr-aws:latest"
             }
         }
         stage("exec") {
@@ -24,10 +29,7 @@ pipeline {
         }
         stage("cleanup"){
             steps {
-                sh 'docker image rm public-ecr-aws:latest'
-                echo 'cleaning up'
-                sh 'rm -rf * && rm -rf .git*'
-                sh 'ls -alh'
+                build('docker-cleanup')
             }
         }
     }
