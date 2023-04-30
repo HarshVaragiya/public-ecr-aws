@@ -18,15 +18,17 @@ import (
 )
 
 const (
-	AWS_ECR_ENDPOINT_URI            = "https://api.us-east-1.gallery.ecr.aws"
-	AWS_ECR_SEARCH_REQUEST_URI      = "/searchRepositoryCatalogData"
-	AWS_ECR_DESCRIBE_IMAGE_TAGS_URI = "/describeImageTags"
-	AWS_ECR_SEARCH_REQUEST_METHOD   = "POST"
-	SEARCH_KEYSPACE                 = "abcdefghijklmnopqrstuvwxyz"
-	REDIS_EXPORT_BATCH_SIZE         = 100
-	REDIS_FLATTEN_THREAD_COUNT      = 2
-	REDIS_EXPORT_THREAD_COUNT       = 4
-	REDIS_RESULT_SET_EXPIRY         = 24
+	AWS_ECR_ENDPOINT_URI                 = "https://api.us-east-1.gallery.ecr.aws"
+	AWS_ECR_SEARCH_REQUEST_URI           = "/searchRepositoryCatalogData"
+	AWS_ECR_DESCRIBE_IMAGE_TAGS_URI      = "/describeImageTags"
+	AWS_ECR_SEARCH_REQUEST_METHOD        = "POST"
+	SEARCH_KEYSPACE                      = "abcdefghijklmnopqrstuvwxyz"
+	REDIS_EXPORT_BATCH_SIZE              = 100
+	REDIS_FLATTEN_THREAD_COUNT           = 2
+	REDIS_EXPORT_THREAD_COUNT            = 4
+	REDIS_DIFF_SET_EXPIRY                = time.Hour * 24 * 3
+	REDIS_RESULT_SET_EXPIRY              = time.Hour * 24
+	REDIS_PREVIOUS_RESULT_SET_KEY_EXPIRY = time.Hour * 24 * 7
 )
 
 var (
@@ -282,13 +284,10 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 	resultSetWg.Wait()
 	log.WithFields(log.Fields{"state": "redis", "action": "store"}).Infof("done storing result set in redis")
 
-	previousSetKey := fmt.Sprintf("ecr-scan:%d", redisKeyPrefix-1)
-
 	diffSetKey := fmt.Sprintf("ecr-diff:%d", redisKeyPrefix)
-
 	newFindingsCount := 0
 
-	if exists, _ := rdb.Exists(ctx, previousSetKey).Result(); exists == 0 {
+	if previousSetKey, err := rdb.Get(ctx, "ecr-scan-previous-results-key").Result(); err != nil {
 		log.WithFields(log.Fields{"state": "redis", "action": "diff"}).Infof("key [ %v ] not found in redis. not generating diff", previousSetKey)
 		diffSetKey = ""
 	} else {
@@ -307,13 +306,17 @@ func sendResultsToRedis(ctx context.Context, results chan *EcrResult, redisKeyPr
 			log.WithFields(log.Fields{"state": "redis", "action": "queue", "status": "error", "errmsg": err.Error()}).Errorf("error adding diff set to queue")
 		}
 
-		if _, err := rdb.Expire(ctx, previousSetKey, time.Hour*REDIS_RESULT_SET_EXPIRY).Result(); err != nil {
+		if _, err := rdb.Expire(ctx, previousSetKey, REDIS_RESULT_SET_EXPIRY).Result(); err != nil {
 			log.WithFields(log.Fields{"state": "redis", "action": "expire", "errmsg": err.Error()}).Error("error setting previous result set expiration time")
 		} else {
 			log.WithFields(log.Fields{"state": "redis", "action": "expire"}).Infof("set previous result set expiry to %v hours", REDIS_RESULT_SET_EXPIRY)
-
 		}
 	}
+
+	log.WithFields(log.Fields{"state": "redis", "action": "expire"}).Infof("setting previous result key to : ", currentSetKey)
+	rdb.Set(ctx, "ecr-scan-previous-results-key", currentSetKey, REDIS_PREVIOUS_RESULT_SET_KEY_EXPIRY)
+	log.WithFields(log.Fields{"state": "redis", "action": "expire"}).Infof("setting diff set key expiry")
+	rdb.Expire(ctx, diffSetKey, REDIS_DIFF_SET_EXPIRY)
 
 	log.WithFields(log.Fields{"state": "redis", "action": "metadata"}).Infof("attempting to storing metadata")
 	statsLock.Lock()
@@ -402,7 +405,7 @@ func main() {
 	trace := flag.Bool("trace", false, "enable trace level logs")
 	outLogFile := flag.String("logs", "", "save output logs to given file")
 	redisStore := flag.Bool("redis-out", false, "save the output to redis instance instead of disk. uses REDIS_HOST & REDIS_PASSWORD environment variables")
-	redisKeyPrefix := flag.Int("redis-key", -1, "redis key to use for storing data. key -1 will be compared against current records.")
+	redisKeyPrefix := flag.Int("redis-key", -1, "redis key to use for storing data.")
 	progressRefreshSeconds := flag.Int("refresh", 1, "refresh interval in seconds")
 	redisBacklogKey := flag.String("redis-backlog-key", "todo-list", "key with todo list of images to be scanned next")
 
